@@ -1,0 +1,65 @@
+syntax = "proto3";
+
+package echo;
+
+// Echo Service for GoTestWAF testing
+// Supports various gRPC patterns and security test scenarios
+service EchoService {
+  // Unary RPC - simple echo
+  rpc Echo(EchoRequest) returns (EchoResponse);
+  
+  // Server streaming RPC
+  rpc ServerStream(EchoRequest) returns (stream EchoResponse);
+  
+  // Client streaming RPC
+  rpc ClientStream(stream EchoRequest) returns (EchoResponse);
+  
+  // Bidirectional streaming RPC
+  rpc BidiStream(stream EchoRequest) returns (stream EchoResponse);
+  
+  // Search endpoint (SQL injection testing)
+  rpc Search(SearchRequest) returns (EchoResponse);
+  
+  // Execute command (command injection testing)
+  rpc Execute(ExecuteRequest) returns (EchoResponse);
+  
+  // Read file (path traversal testing)
+  rpc ReadFile(FileRequest) returns (EchoResponse);
+}
+
+// Basic echo request
+message EchoRequest {
+  string message = 1;
+  map<string, string> headers = 2;
+  bytes payload = 3;
+}
+
+// Search request for SQL injection testing
+message SearchRequest {
+  string query = 1;
+  int32 limit = 2;
+  int32 offset = 3;
+  repeated string fields = 4;
+  string order_by = 5;
+}
+
+// Execute request for command injection testing
+message ExecuteRequest {
+  string command = 1;
+  repeated string args = 2;
+  map<string, string> env = 3;
+}
+
+// File request for path traversal testing
+message FileRequest {
+  string path = 1;
+  string encoding = 2;
+  bool follow_symlinks = 3;
+}
+
+// Generic echo response
+message EchoResponse {
+  string message = 1;
+  string timestamp = 2;
+  string metadata = 3;
+}

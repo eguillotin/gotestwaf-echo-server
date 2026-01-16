@@ -1,0 +1,49 @@
+# =============================================================================
+# WAF Targets Configuration for GoTestWAF Testing
+# =============================================================================
+# Format: name,url,graphql_url,grpc_port
+# 
+# - name: Identifier for the WAF (used in reports)
+# - url: Base URL of the application behind the WAF
+# - graphql_url: GraphQL endpoint URL (leave empty if not available)
+# - grpc_port: gRPC port (leave empty if not available)
+#
+# Lines starting with # are comments
+# =============================================================================
+
+# Local echo server (no WAF - baseline)
+baseline,http://localhost:8080,http://localhost:8080/graphql,50051
+
+# Example WAF configurations (update with your actual endpoints)
+# cloudflare,https://app.cloudflare-protected.example.com,https://app.cloudflare-protected.example.com/graphql,443
+# akamai,https://app.akamai-protected.example.com,https://app.akamai-protected.example.com/graphql,
+# imperva,https://app.imperva-protected.example.com,https://app.imperva-protected.example.com/graphql,443
+# f5-bigip,https://app.f5-protected.example.com,,
+# aws-waf,https://app.aws-waf.example.com,https://app.aws-waf.example.com/graphql,
+# azure-waf,https://app.azure-waf.example.com,,
+# fastly,https://app.fastly-protected.example.com,https://app.fastly-protected.example.com/graphql,
+# radware,https://app.radware-protected.example.com,,
+
+# =============================================================================
+# Testing Scenarios
+# =============================================================================
+# 
+# 1. Direct (No WAF) - Baseline
+#    Test against the echo server directly to establish baseline behavior
+#
+# 2. Single WAF
+#    Place WAF in front of echo server, test through WAF
+#
+# 3. Multiple WAFs
+#    Compare detection rates across different WAF solutions
+#
+# Architecture for testing:
+#
+#   ┌─────────────┐     ┌─────────────┐     ┌─────────────────┐
+#   │  GoTestWAF  │────▶│     WAF     │────▶│   Echo Server   │
+#   └─────────────┘     └─────────────┘     └─────────────────┘
+#                              │
+#                    Blocks malicious requests
+#                    Allows legitimate requests
+#
+# =============================================================================
