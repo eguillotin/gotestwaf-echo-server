@@ -9,18 +9,25 @@ const express = require('express');
 const { ApolloServer } = require('@apollo/server');
 const { expressMiddleware } = require('@apollo/server/express4');
 const { createServer } = require('http');
+const { createServer: createHttpsServer } = require('https');
 const { WebSocketServer } = require('ws');
 const grpc = require('@grpc/grpc-js');
 const protoLoader = require('@grpc/proto-loader');
 const bodyParser = require('body-parser');
 const cors = require('cors');
 const path = require('path');
+const fs = require('fs');
 
 // ============================================
 // Configuration
 // ============================================
 const HTTP_PORT = process.env.HTTP_PORT || 8080;
+const HTTPS_PORT = process.env.HTTPS_PORT || 8443;
 const GRPC_PORT = process.env.GRPC_PORT || 50051;
+
+// SSL Certificate paths
+const SSL_CERT_PATH = process.env.SSL_CERT_PATH || '/app/fullchain.pem';
+const SSL_KEY_PATH = process.env.SSL_KEY_PATH || '/app/privkey.pem';
 
 // ============================================
 // Express App Setup (HTTP/REST/GraphQL)
@@ -413,7 +420,7 @@ async function startServer() {
   // Create HTTP server
   const httpServer = createServer(app);
   
-  // Setup WebSocket
+  // Setup WebSocket on HTTP
   setupWebSocket(httpServer);
   
   // Setup Apollo GraphQL Server
@@ -435,19 +442,48 @@ async function startServer() {
   
   // Start HTTP server
   httpServer.listen(HTTP_PORT, '0.0.0.0', () => {
+    console.log(`[HTTP] Server running on port ${HTTP_PORT}`);
+  });
+
+  // Start HTTPS server if certificates exist
+  if (fs.existsSync(SSL_CERT_PATH) && fs.existsSync(SSL_KEY_PATH)) {
+    try {
+      const sslOptions = {
+        cert: fs.readFileSync(SSL_CERT_PATH),
+        key: fs.readFileSync(SSL_KEY_PATH)
+      };
+      
+      const httpsServer = createHttpsServer(sslOptions, app);
+      
+      // Setup WebSocket on HTTPS
+      setupWebSocket(httpsServer);
+      
+      httpsServer.listen(HTTPS_PORT, '0.0.0.0', () => {
+        console.log(`[HTTPS] Server running on port ${HTTPS_PORT}`);
+      });
+    } catch (err) {
+      console.error('[HTTPS] Failed to start:', err.message);
+    }
+  } else {
+    console.log('[HTTPS] Certificates not found, skipping HTTPS');
+  }
+
+  // Print banner after servers start
+  setTimeout(() => {
     console.log(`
 ╔══════════════════════════════════════════════════════════════╗
 ║     GoTestWAF Multi-Protocol Echo Server                     ║
 ╠══════════════════════════════════════════════════════════════╣
 ║  HTTP/REST   : http://0.0.0.0:${HTTP_PORT}                          ║
-║  GraphQL     : http://0.0.0.0:${HTTP_PORT}/graphql                  ║
-║  WebSocket   : ws://0.0.0.0:${HTTP_PORT}/ws                         ║
+║  HTTPS/REST  : https://0.0.0.0:${HTTPS_PORT}                         ║
+║  GraphQL     : http(s)://0.0.0.0:${HTTP_PORT}/graphql               ║
+║  WebSocket   : ws(s)://0.0.0.0:${HTTP_PORT}/ws                      ║
 ║  gRPC        : grpc://0.0.0.0:${GRPC_PORT}                         ║
 ╠══════════════════════════════════════════════════════════════╣
-║  Health Check: http://0.0.0.0:${HTTP_PORT}/health                   ║
+║  Health Check: http(s)://0.0.0.0:${HTTP_PORT}/health                ║
 ╚══════════════════════════════════════════════════════════════╝
     `);
-  });
+  }, 100);
   
   // Start gRPC server
   const grpcServer = new grpc.Server();
