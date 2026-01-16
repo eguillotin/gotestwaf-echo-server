@@ -6,34 +6,58 @@ A Docker-based echo server supporting all protocols required for comprehensive W
 
 | Protocol | Port | Endpoint |
 |----------|------|----------|
-| HTTP/HTTPS | 8080 | `/*` (catch-all) |
-| REST API | 8080 | `/api/v1/*`, `/api/v2/*` |
-| GraphQL | 8080 | `/graphql` |
+| HTTP | 8080 | `/*` (catch-all) |
+| HTTPS | 8443 | `/*` (catch-all) |
+| REST API | 8080/8443 | `/api/*`, `/rest/*` |
+| GraphQL | 8080/8443 | `/graphql` |
+| WebSocket | 8080/8443 | `/ws` |
 | gRPC | 50051 | `EchoService` |
 
 ## Quick Start
 
-### Build and Run
+### Build and Run (HTTP only)
 
 ```bash
 # Build the image
-docker-compose build
+docker build -t gotestwaf-echo-server .
 
 # Run the echo server
-docker-compose up -d
+docker run -d -p 8080:8080 -p 50051:50051 --name echo-server gotestwaf-echo-server
 
 # Verify it's running
 curl http://localhost:8080/health
 ```
 
-### Standalone Docker
+### Run with HTTPS (SSL/TLS)
 
 ```bash
-# Build
-docker build -t gotestwaf-echo-server .
+# Run with SSL certificates
+docker run -d --name echo-server \
+  -v $(pwd)/fullchain.pem:/app/fullchain.pem \
+  -v $(pwd)/privkey.pem:/app/privkey.pem \
+  -p 80:8080 \
+  -p 443:8443 \
+  -p 50051:50051 \
+  gotestwaf-echo-server
 
-# Run
-docker run -d -p 8080:8080 -p 50051:50051 --name echo-server gotestwaf-echo-server
+# Test HTTP
+curl http://localhost/health
+
+# Test HTTPS (use -k to skip certificate verification for self-signed certs)
+curl https://localhost/health -k
+```
+
+### Using Docker Compose
+
+```bash
+# Build and run
+docker compose up -d
+
+# Check status
+docker compose ps
+
+# View logs
+docker compose logs -f
 ```
 
 ## Testing with GoTestWAF
@@ -167,12 +191,12 @@ grpcurl -plaintext localhost:50051 describe echo.EchoService
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    Echo Server Container                     │
+│                    Echo Server Container                    │
 │                                                             │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐ │
-│  │   HTTP      │  │   GraphQL   │  │       gRPC          │ │
+│  │  HTTP/HTTPS │  │   GraphQL   │  │       gRPC          │ │
 │  │   Handler   │  │   Handler   │  │      Server         │ │
-│  │  (Mux)      │  │             │  │                     │ │
+│  │  (Express)  │  │  (Apollo)   │  │                     │ │
 │  └──────┬──────┘  └──────┬──────┘  └──────────┬──────────┘ │
 │         │                │                     │            │
 │         └────────────────┴─────────────────────┘            │
@@ -180,7 +204,8 @@ grpcurl -plaintext localhost:50051 describe echo.EchoService
 │                    Echo Response                            │
 │              (Returns all input data)                       │
 │                                                             │
-│  Port 8080: HTTP/REST/GraphQL                               │
+│  Port 8080: HTTP/REST/GraphQL/WebSocket                     │
+│  Port 8443: HTTPS/REST/GraphQL/WebSocket (SSL)              │
 │  Port 50051: gRPC                                           │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -237,24 +262,22 @@ All endpoints echo back request details in JSON:
 }
 ```
 
-## Customization
-
-### Environment Variables
+## Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `HTTP_PORT` | `:8080` | HTTP server port |
-| `GRPC_PORT` | `:50051` | gRPC server port |
+| `HTTP_PORT` | `8080` | HTTP server port |
+| `HTTPS_PORT` | `8443` | HTTPS server port |
+| `GRPC_PORT` | `50051` | gRPC server port |
+| `SSL_CERT_PATH` | `/app/fullchain.pem` | Path to SSL certificate |
+| `SSL_KEY_PATH` | `/app/privkey.pem` | Path to SSL private key |
 
 ### Adding Custom Endpoints
 
-Modify `main.go` to add custom endpoints for specific testing scenarios:
+Modify `server.js` to add custom endpoints for specific testing scenarios:
 
-```go
-router.HandleFunc("/custom/endpoint", func(w http.ResponseWriter, r *http.Request) {
-    // Custom logic
-    echoHandler(w, r)
-}).Methods("GET", "POST")
+```javascript
+app.all('/custom/endpoint', echoHandler);
 ```
 
 ## License
