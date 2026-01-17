@@ -112,8 +112,7 @@ app.all('/download', echoHandler);
 app.all('/include', echoHandler);
 app.all('/redirect', echoHandler);
 
-// Catch-all for any other paths
-app.all('*', echoHandler);
+// NOTE: Catch-all route is added AFTER GraphQL middleware in startServer()
 
 // ============================================
 // GraphQL Setup
@@ -439,6 +438,9 @@ async function startServer() {
       context: async ({ req }) => ({ headers: req.headers })
     })
   );
+  
+  // Catch-all for any other paths (MUST be after GraphQL middleware)
+  app.all('*', echoHandler);
   
   // Start HTTP server
   httpServer.listen(HTTP_PORT, '0.0.0.0', () => {
