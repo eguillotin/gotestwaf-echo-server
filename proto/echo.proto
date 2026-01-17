@@ -30,7 +30,7 @@ service EchoService {
 // Basic echo request
 message EchoRequest {
   string message = 1;
-  map<string, string> headers = 2;
+  string headers_json = 2;
   bytes payload = 3;
 }
 
@@ -47,7 +47,7 @@ message SearchRequest {
 message ExecuteRequest {
   string command = 1;
   repeated string args = 2;
-  map<string, string> env = 3;
+  string env_json = 3;
 }
 
 // File request for path traversal testing
