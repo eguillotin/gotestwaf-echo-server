@@ -13,6 +13,7 @@ const { createServer: createHttpsServer } = require('https');
 const { WebSocketServer } = require('ws');
 const grpc = require('@grpc/grpc-js');
 const protoLoader = require('@grpc/proto-loader');
+const { ReflectionService } = require('@grpc/reflection');
 const bodyParser = require('body-parser');
 const cors = require('cors');
 const path = require('path');
@@ -34,14 +35,24 @@ const SSL_KEY_PATH = process.env.SSL_KEY_PATH || '/app/privkey.pem';
 // ============================================
 const app = express();
 
-// Middleware to capture raw body for echo
-app.use(bodyParser.raw({ type: '*/*', limit: '10mb' }));
+// CORS first
 app.use(cors());
 
 // Request logging middleware
 app.use((req, res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
   next();
+});
+
+// JSON parser for GraphQL only
+app.use('/graphql', express.json());
+
+// Raw body parser for everything else (for echo functionality)
+app.use((req, res, next) => {
+  if (req.path === '/graphql') {
+    return next();
+  }
+  bodyParser.raw({ type: '*/*', limit: '10mb' })(req, res, next);
 });
 
 // ============================================
@@ -431,9 +442,8 @@ async function startServer() {
   
   await apolloServer.start();
   
-  // Mount GraphQL at /graphql
+  // Mount GraphQL at /graphql (express.json() already applied via global middleware)
   app.use('/graphql', 
-    express.json(),
     expressMiddleware(apolloServer, {
       context: async ({ req }) => ({ headers: req.headers })
     })
@@ -487,9 +497,13 @@ async function startServer() {
     `);
   }, 100);
   
-  // Start gRPC server
+  // Start gRPC server with reflection
   const grpcServer = new grpc.Server();
   grpcServer.addService(echoProto.EchoService.service, grpcServices);
+  
+  // Add reflection service for grpcurl discovery
+  const reflection = new ReflectionService(packageDefinition);
+  reflection.addToServer(grpcServer);
   
   grpcServer.bindAsync(
     `0.0.0.0:${GRPC_PORT}`,
