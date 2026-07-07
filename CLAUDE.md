@@ -22,8 +22,9 @@ Genuine defects only — crashes, things that don't build, config that breaks st
 
 ## Active implementation
 
-- **`server.js` (Node/Express + Apollo + @grpc/grpc-js + ws) is the real server.** The `Dockerfile` and `docker-compose.yml` build and run it.
-- **`main.go` is a broken/dead alternate.** It does not compile — `proto/` has only `echo.proto` and no generated `*.pb.go` stubs, and the Go structs don't match the proto. Ignore it unless explicitly asked to revive the Go path. If revived, review `main.go:68-70`, which reflects arbitrary request headers into *response* headers (the Node server does not do this).
+- **`server.js` (Node/Express + Apollo + @grpc/grpc-js + ws) is the only server.** The `Dockerfile` and `docker-compose.yml` build and run it.
+- `proto/echo.proto` is loaded by the Node gRPC server at runtime — keep it.
+- There is no Go server. A broken, non-compiling Go implementation (`main.go` + `go.mod`) was removed; don't re-add a second implementation unless explicitly asked.
 
 ## Ports gotcha
 
