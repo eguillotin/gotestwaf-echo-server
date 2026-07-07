@@ -13,6 +13,9 @@ This server deliberately looks insecure. The following are **required behavior**
 - Endpoints like `/exec`, `/eval`, `/cmd`, `/upload`, `/admin/*`, `/file/*` and GraphQL `exec`/`file`/`executeCommand` resolvers.
 - Reflecting attacker payloads (SQLi, XSS, RCE strings, path traversal) verbatim in responses.
 - Wide-open `CORS *`, GraphQL introspection enabled, gRPC reflection enabled, no auth.
+- Apollo `csrfPrevention: false` — the endpoint must accept GET and any content-type
+  so scanners (GoTestWAF's GraphQL availability pre-check uses GET) aren't rejected
+  with HTTP 400. Do not re-enable it.
 
 **Do not lock any of this down** — it breaks the tool. These endpoints only *echo strings*; none of them actually execute commands, read user-specified files, or make outbound requests (verified: no `child_process`, `eval`, `fs` reads of request input, or SSRF). That is the correct and safe design for a WAF test target.
 

@@ -478,7 +478,12 @@ async function startServer() {
   const apolloServer = new ApolloServer({
     typeDefs,
     resolvers,
-    introspection: true,  // Enable introspection for testing
+    introspection: true,       // Enable introspection for testing
+    // Disable Apollo's CSRF prevention: it rejects GET and non-application/json
+    // requests with HTTP 400, which breaks GoTestWAF's GraphQL availability
+    // pre-check (and any scanner probing the endpoint in other request shapes).
+    // This is a deliberately-permissive echo target, so accept every request.
+    csrfPrevention: false,
   });
   
   await apolloServer.start();
