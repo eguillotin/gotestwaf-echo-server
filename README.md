@@ -102,6 +102,65 @@ docker run --rm -it \
   --reportPath /reports
 ```
 
+## Testing Behind a WAF (Pre-check Gotchas)
+
+When the echo server sits behind a real WAF (e.g. Imperva Cloud WAF), GoTestWAF's
+GraphQL and gRPC **pre-checks** can fail before any test runs — even though the
+endpoints work. These are WAF/topology issues, not echo-server bugs:
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| `gRPC pre-check connection="not available"` | Cloud WAF only proxies 80/443, not the gRPC port (e.g. 50051) | Test gRPC **direct to the origin** (`--url=http://<origin>:<port>`), or front gRPC with a gRPC-capable proxy |
+| `GraphQL pre-check ... couldn't send request` | WAF issues a session/redirect challenge (e.g. Imperva `307` + `incap_ses` cookies) the pre-check client doesn't complete | `--followCookies --renewSession`, or exempt the test source IP from the session challenge |
+| `GraphQL pre-check connection="not available"` (instant) | WAF blocks the pre-check probe `GET /graphql?query={__typename}` (introspection-like) | Narrow WAF exception (below), or the patched flags (below) |
+
+### The GraphQL pre-check request (for a narrow WAF exception)
+
+GoTestWAF probes availability with exactly:
+
+```
+GET /graphql?query={__typename}
+```
+
+Success = HTTP `200` with a JSON body containing `data.__typename`. To let *only*
+this probe through Imperva without whitelisting the whole endpoint, scope an
+exception to: **source IP + URL `/graphql` + query string `query={__typename}`**.
+The actual attack payloads are `POST` with JSON bodies, so they still get fully
+inspected.
+
+### Option: skip the pre-checks in GoTestWAF
+
+This repo ships `gotestwaf-skip-checks.patch`, which adds `--skipGraphQLCheck` and
+`--skipGRPCCheck` to GoTestWAF. They skip the pre-check probe entirely and proceed
+straight to sending payloads (which the WAF still inspects) — no exception needed:
+
+```bash
+git clone https://github.com/wallarm/gotestwaf.git && cd gotestwaf
+git apply /path/to/gotestwaf-skip-checks.patch
+go build -o gotestwaf ./cmd/gotestwaf
+
+./gotestwaf --url=https://your-domain-behind-waf.com \
+  --graphqlURL=https://your-domain-behind-waf.com/graphql --skipGraphQLCheck \
+  --blockStatusCodes=403 --blockConnReset --followCookies --renewSession \
+  --nonBlockedAsPassed --ignoreUnresolved --reportFormat=pdf
+```
+
+Prefer a container? `gotestwaf-patched.Dockerfile` builds the patched tool
+(mirroring the upstream image), applying the patch during the build:
+
+```bash
+docker build -f gotestwaf-patched.Dockerfile -t gotestwaf-patched .
+docker run --rm --network host -v "$(pwd)/reports:/app/reports" gotestwaf-patched \
+  --url=https://your-domain-behind-waf.com \
+  --graphqlURL=https://your-domain-behind-waf.com/graphql --skipGraphQLCheck \
+  --nonBlockedAsPassed --ignoreUnresolved --reportFormat=pdf --reportPath=/app/reports
+```
+
+The full PR write-up for upstreaming these flags is in `gotestwaf-skip-checks-PR.md`.
+
+> Note: the echo server sets Apollo `csrfPrevention: false` so scanners probing
+> `/graphql` via `GET` or non-JSON content types aren't rejected with HTTP 400.
+
 ## Endpoints Reference
 
 ### HTTP Echo (Classic WAF Testing)
