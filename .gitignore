@@ -1,0 +1,14 @@
+# Dependencies
+node_modules/
+
+# Reports produced by run-waf-tests.sh
+reports/
+
+# SSL material — never commit private keys/certs
+*.pem
+fullchain.pem
+privkey.pem
+
+# Logs and OS cruft
+*.log
+.DS_Store

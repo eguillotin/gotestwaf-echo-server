@@ -7,7 +7,7 @@
 
 const express = require('express');
 const { ApolloServer } = require('@apollo/server');
-const { expressMiddleware } = require('@apollo/server/express4');
+const { expressMiddleware } = require('@as-integrations/express4');
 const { createServer } = require('http');
 const { createServer: createHttpsServer } = require('https');
 const { WebSocketServer } = require('ws');
@@ -42,6 +42,18 @@ const HTTP_PORT = parsePort(process.env.HTTP_PORT, 8080);
 const HTTPS_PORT = parsePort(process.env.HTTPS_PORT, 8443);
 const GRPC_PORT = parsePort(process.env.GRPC_PORT, 50051);
 
+// Max message/body size shared across protocols (HTTP raw body, WebSocket
+// frames, gRPC client-stream accumulation). Echoing payloads is the job;
+// letting a single client OOM the box is not.
+const MAX_PAYLOAD_BYTES = 10 * 1024 * 1024; // 10mb, matches bodyParser limit
+
+// Strip CR/LF and other control chars from attacker-controlled values before
+// they reach console.log, so payloads can't forge log lines (log injection).
+// Response bodies still echo the original input untouched.
+function logSafe(value) {
+  return String(value).replace(/[\r\n\x00-\x08\x0b\x0c\x0e-\x1f]/g, ' ').slice(0, 2048);
+}
+
 // SSL Certificate paths
 const SSL_CERT_PATH = process.env.SSL_CERT_PATH || '/app/fullchain.pem';
 const SSL_KEY_PATH = process.env.SSL_KEY_PATH || '/app/privkey.pem';
@@ -56,7 +68,7 @@ app.use(cors());
 
 // Request logging middleware
 app.use((req, res, next) => {
-  console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+  console.log(`[${new Date().toISOString()}] ${logSafe(req.method)} ${logSafe(req.url)}`);
   next();
 });
 
@@ -68,7 +80,7 @@ app.use((req, res, next) => {
   if (req.path === '/graphql') {
     return next();
   }
-  bodyParser.raw({ type: '*/*', limit: '10mb' })(req, res, next);
+  bodyParser.raw({ type: '*/*', limit: MAX_PAYLOAD_BYTES })(req, res, next);
 });
 
 // ============================================
@@ -87,7 +99,7 @@ const echoHandler = (req, res) => {
     headers: req.headers,
     query: req.query,
     params: req.params,
-    body: req.body ? req.body.toString('utf-8') : null,
+    body: Buffer.isBuffer(req.body) ? req.body.toString('utf-8') : null,
     ip: req.ip,
     cookies: req.cookies || {},
     hostname: req.hostname
@@ -311,7 +323,7 @@ const echoProto = grpc.loadPackageDefinition(packageDefinition).echo;
 const grpcServices = {
   // Unary echo
   Echo: (call, callback) => {
-    console.log(`[gRPC] Echo request: ${call.request.message}`);
+    console.log(`[gRPC] Echo request: ${logSafe(call.request.message)}`);
     callback(null, {
       message: call.request.message,
       timestamp: new Date().toISOString(),
@@ -321,7 +333,7 @@ const grpcServices = {
   
   // Server streaming
   ServerStream: (call) => {
-    console.log(`[gRPC] ServerStream request: ${call.request.message}`);
+    console.log(`[gRPC] ServerStream request: ${logSafe(call.request.message)}`);
     for (let i = 0; i < 5; i++) {
       call.write({
         message: `Stream ${i}: ${call.request.message}`,
@@ -334,14 +346,25 @@ const grpcServices = {
   
   // Client streaming
   ClientStream: (call, callback) => {
+    // Bound accumulation: count every message, but only retain up to
+    // MAX_PAYLOAD_BYTES of content — an unbounded array lets a single
+    // client stream the process into an OOM kill.
     const messages = [];
+    let count = 0;
+    let retainedBytes = 0;
     call.on('data', (request) => {
-      console.log(`[gRPC] ClientStream data: ${request.message}`);
-      messages.push(request.message);
+      console.log(`[gRPC] ClientStream data: ${logSafe(request.message)}`);
+      count++;
+      const msg = String(request.message);
+      if (retainedBytes < MAX_PAYLOAD_BYTES) {
+        messages.push(msg);
+        retainedBytes += Buffer.byteLength(msg);
+      }
     });
     call.on('end', () => {
+      const truncated = count > messages.length ? ' (truncated)' : '';
       callback(null, {
-        message: `Received ${messages.length} messages: ${messages.join(', ')}`,
+        message: `Received ${count} messages: ${messages.join(', ')}${truncated}`,
         timestamp: new Date().toISOString(),
         metadata: ''
       });
@@ -351,7 +374,7 @@ const grpcServices = {
   // Bidirectional streaming
   BidiStream: (call) => {
     call.on('data', (request) => {
-      console.log(`[gRPC] BidiStream data: ${request.message}`);
+      console.log(`[gRPC] BidiStream data: ${logSafe(request.message)}`);
       call.write({
         message: `Echo: ${request.message}`,
         timestamp: new Date().toISOString(),
@@ -365,7 +388,7 @@ const grpcServices = {
 
   // Search endpoint for testing
   Search: (call, callback) => {
-    console.log(`[gRPC] Search request: ${call.request.query}`);
+    console.log(`[gRPC] Search request: ${logSafe(call.request.query)}`);
     callback(null, {
       message: `Search results for: ${call.request.query}`,
       timestamp: new Date().toISOString(),
@@ -375,7 +398,7 @@ const grpcServices = {
 
   // Execute command (for testing command injection detection)
   Execute: (call, callback) => {
-    console.log(`[gRPC] Execute request: ${call.request.command}`);
+    console.log(`[gRPC] Execute request: ${logSafe(call.request.command)}`);
     callback(null, {
       message: `Command echoed: ${call.request.command}`,
       timestamp: new Date().toISOString(),
@@ -385,7 +408,7 @@ const grpcServices = {
 
   // File read (for testing path traversal detection)
   ReadFile: (call, callback) => {
-    console.log(`[gRPC] ReadFile request: ${call.request.path}`);
+    console.log(`[gRPC] ReadFile request: ${logSafe(call.request.path)}`);
     callback(null, {
       message: `File path echoed: ${call.request.path}`,
       timestamp: new Date().toISOString(),
@@ -399,14 +422,16 @@ const grpcServices = {
 // ============================================
 
 function setupWebSocket(server) {
-  const wss = new WebSocketServer({ server, path: '/ws' });
+  // maxPayload: ws defaults to 100 MiB per frame; cap to the same limit as
+  // HTTP bodies so oversized frames can't exhaust memory.
+  const wss = new WebSocketServer({ server, path: '/ws', maxPayload: MAX_PAYLOAD_BYTES });
   
   wss.on('connection', (ws, req) => {
     console.log(`[WebSocket] New connection from ${req.socket.remoteAddress}`);
     
     ws.on('message', (message) => {
       const messageStr = message.toString();
-      console.log(`[WebSocket] Received: ${messageStr}`);
+      console.log(`[WebSocket] Received: ${logSafe(messageStr)}`);
       
       // Echo back with metadata
       const response = JSON.stringify({
