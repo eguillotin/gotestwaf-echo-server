@@ -1,0 +1,83 @@
+diff --git a/README.md b/README.md
+index 8e5471b..b91dbd3 100644
+--- a/README.md
++++ b/README.md
+@@ -398,6 +398,8 @@ Options:
+       --reportName string       Report file name. Supports `time' package template format (default "waf-evaluation-report-2006-January-02-15-04-05")
+       --reportPath string       A directory to store reports (default "reports")
+       --sendDelay int           Delay in ms between requests (default 400)
++      --skipGRPCCheck           If present, the gRPC pre-check is skipped and gRPC is assumed available
++      --skipGraphQLCheck        If present, the GraphQL pre-check is skipped and GraphQL is assumed available
+       --skipWAFBlockCheck       If present, WAF detection tests will be skipped
+       --skipWAFIdentification   Skip WAF identification
+       --testCase string         If set then only this test case will be run
+diff --git a/cmd/gotestwaf/flags.go b/cmd/gotestwaf/flags.go
+index d3564cd..c3b31b3 100644
+--- a/cmd/gotestwaf/flags.go
++++ b/cmd/gotestwaf/flags.go
+@@ -131,6 +131,8 @@ func parseFlags() (args []string, err error) {
+ 	// Analysis settings
+ 	flag.Bool("skipWAFBlockCheck", false, "If present, WAF detection tests will be skipped")
+ 	flag.Bool("skipWAFIdentification", false, "Skip WAF identification")
++	flag.Bool("skipGraphQLCheck", false, "If present, the GraphQL availability pre-check is skipped and GraphQL is assumed available (use when a WAF blocks the benign pre-check probe)")
++	flag.Bool("skipGRPCCheck", false, "If present, the gRPC availability pre-check is skipped and gRPC is assumed available (use when a WAF blocks the benign pre-check probe)")
+ 	flag.IntSlice("blockStatusCodes", []int{403}, "HTTP status code that WAF uses while blocking requests")
+ 	flag.IntSlice("passStatusCodes", []int{200, 404}, "HTTP response status code that WAF uses while passing requests")
+ 	blockRegex := flag.String("blockRegex", "",
+diff --git a/internal/config/config.go b/internal/config/config.go
+index cc38814..2da5798 100644
+--- a/internal/config/config.go
++++ b/internal/config/config.go
+@@ -38,6 +38,8 @@ type Config struct {
+ 	// Analysis settings
+ 	SkipWAFBlockCheck     bool   `mapstructure:"skipWAFBlockCheck"`
+ 	SkipWAFIdentification bool   `mapstructure:"skipWAFIdentification"`
++	SkipGraphQLCheck      bool   `mapstructure:"skipGraphQLCheck"`
++	SkipGRPCCheck         bool   `mapstructure:"skipGRPCCheck"`
+ 	BlockStatusCodes      []int  `mapstructure:"blockStatusCodes"`
+ 	PassStatusCodes       []int  `mapstructure:"passStatusCodes"`
+ 	BlockRegex            string `mapstructure:"blockRegex"`
+diff --git a/internal/scanner/scanner.go b/internal/scanner/scanner.go
+index 7b45feb..bdb7eb0 100644
+--- a/internal/scanner/scanner.go
++++ b/internal/scanner/scanner.go
+@@ -176,6 +176,15 @@ func (s *Scanner) CheckIfJavaScriptRequired(ctx context.Context) (bool, error) {
+ 
+ // CheckGRPCAvailability checks if the gRPC server is available at the given URL.
+ func (s *Scanner) CheckGRPCAvailability(ctx context.Context) {
++	if s.cfg.SkipGRPCCheck {
++		s.logger.WithFields(logrus.Fields{
++			"status":     "skipped",
++			"connection": "assumed available",
++		}).Info("gRPC pre-check")
++		s.db.IsGrpcAvailable = true
++		return
++	}
++
+ 	s.logger.WithField("status", "started").Info("gRPC pre-check")
+ 
+ 	available, err := s.grpcConn.CheckAvailability(ctx)
+@@ -201,6 +210,15 @@ func (s *Scanner) CheckGRPCAvailability(ctx context.Context) {
+ 
+ // CheckGraphQLAvailability checks if the GraphQL is available at the given URL.
+ func (s *Scanner) CheckGraphQLAvailability(ctx context.Context) {
++	if s.cfg.SkipGraphQLCheck {
++		s.logger.WithFields(logrus.Fields{
++			"status":     "skipped",
++			"connection": "assumed available",
++		}).Info("GraphQL pre-check")
++		s.db.IsGraphQLAvailable = true
++		return
++	}
++
+ 	s.logger.WithField("status", "started").Info("GraphQL pre-check")
+ 
+ 	available, err := s.graphqlClient.CheckAvailability(ctx)
+@@ -211,7 +229,6 @@ func (s *Scanner) CheckGraphQLAvailability(ctx context.Context) {
+ 		}).WithError(err).Infof("GraphQL pre-check")
+ 	}
+ 
+-	s.db.IsGrpcAvailable = available
+ 	connection := "not available"
+ 	if available {
+ 		connection = "available"
