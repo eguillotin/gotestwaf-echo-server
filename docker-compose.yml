@@ -10,8 +10,10 @@ services:
       - "8080:8080"     # HTTP/REST/GraphQL
       - "50051:50051"   # gRPC
     environment:
-      - HTTP_PORT=:8080
-      - GRPC_PORT=:50051
+      # The container runs the Node server (server.js), which expects plain
+      # numeric ports. (Colon-prefixed ":8080" is Go listen syntax.)
+      - HTTP_PORT=8080
+      - GRPC_PORT=50051
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 10s

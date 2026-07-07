@@ -22,9 +22,25 @@ const fs = require('fs');
 // ============================================
 // Configuration
 // ============================================
-const HTTP_PORT = process.env.HTTP_PORT || 8080;
-const HTTPS_PORT = process.env.HTTPS_PORT || 8443;
-const GRPC_PORT = process.env.GRPC_PORT || 50051;
+// Parse a port from an env var. Tolerates both plain "8080" and the
+// Go-style ":8080" form (the Go server in this repo and docker-compose.yml
+// historically used the colon syntax, which Node's listen() cannot use).
+function parsePort(value, defaultPort) {
+  if (value === undefined || value === null || value === '') {
+    return defaultPort;
+  }
+  const cleaned = String(value).replace(/^:/, '');
+  const port = Number(cleaned);
+  if (!Number.isInteger(port) || port < 0 || port > 65535) {
+    console.warn(`[config] Invalid port "${value}", falling back to ${defaultPort}`);
+    return defaultPort;
+  }
+  return port;
+}
+
+const HTTP_PORT = parsePort(process.env.HTTP_PORT, 8080);
+const HTTPS_PORT = parsePort(process.env.HTTPS_PORT, 8443);
+const GRPC_PORT = parsePort(process.env.GRPC_PORT, 50051);
 
 // SSL Certificate paths
 const SSL_CERT_PATH = process.env.SSL_CERT_PATH || '/app/fullchain.pem';
