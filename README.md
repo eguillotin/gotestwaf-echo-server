@@ -132,31 +132,54 @@ inspected.
 
 This repo ships `gotestwaf-skip-checks.patch`, which adds `--skipGraphQLCheck` and
 `--skipGRPCCheck` to GoTestWAF. They skip the pre-check probe entirely and proceed
-straight to sending payloads (which the WAF still inspects) — no exception needed:
+straight to sending payloads (which the WAF still inspects) — no exception needed.
 
+The patch's absolute path in this repo is:
+`<repo>/gotestwaf-skip-checks.patch` (substitute your own checkout path below).
+
+#### Build the patched tool — pick one
+
+**A. Apply to an existing gotestwaf clone**
+```bash
+cd <your-gotestwaf-clone>
+# --3way survives minor upstream drift; resolve any <<<< markers if they appear
+git apply --3way /path/to/gotestwaf-skip-checks.patch
+go build -o gotestwaf ./cmd/gotestwaf
+./gotestwaf --help | grep -i skip        # confirm --skipGraphQLCheck / --skipGRPCCheck
+```
+
+**B. Fresh clone**
 ```bash
 git clone https://github.com/wallarm/gotestwaf.git && cd gotestwaf
-git apply /path/to/gotestwaf-skip-checks.patch
+git apply --3way /path/to/gotestwaf-skip-checks.patch
 go build -o gotestwaf ./cmd/gotestwaf
+```
 
+**C. Docker** — `gotestwaf-patched.Dockerfile` clones + patches + builds for you:
+```bash
+docker build -f gotestwaf-patched.Dockerfile -t gotestwaf-patched .
+docker run --rm gotestwaf-patched --help | grep -i skip   # verify
+```
+
+#### Run it (through the WAF, GraphQL pre-check skipped)
+
+```bash
+# local binary (options A/B)
 ./gotestwaf --url=https://your-domain-behind-waf.com \
   --graphqlURL=https://your-domain-behind-waf.com/graphql --skipGraphQLCheck \
   --blockStatusCodes=403 --blockConnReset --followCookies --renewSession \
   --nonBlockedAsPassed --ignoreUnresolved --reportFormat=pdf
-```
 
-Prefer a container? `gotestwaf-patched.Dockerfile` builds the patched tool
-(mirroring the upstream image), applying the patch during the build:
-
-```bash
-docker build -f gotestwaf-patched.Dockerfile -t gotestwaf-patched .
-docker run --rm --network host -v "$(pwd)/reports:/app/reports" gotestwaf-patched \
+# Docker equivalent (option C)
+docker run --rm -v "$(pwd)/reports:/app/reports" gotestwaf-patched \
   --url=https://your-domain-behind-waf.com \
   --graphqlURL=https://your-domain-behind-waf.com/graphql --skipGraphQLCheck \
   --nonBlockedAsPassed --ignoreUnresolved --reportFormat=pdf --reportPath=/app/reports
 ```
 
-The full PR write-up for upstreaming these flags is in `gotestwaf-skip-checks-PR.md`.
+The log should read `GraphQL pre-check status=skipped connection="assumed available"`.
+gRPC through a Cloud WAF still won't work (port not proxied) — test gRPC direct to the
+origin. The full PR write-up for upstreaming these flags is in `gotestwaf-skip-checks-PR.md`.
 
 > Note: the echo server sets Apollo `csrfPrevention: false` so scanners probing
 > `/graphql` via `GET` or non-JSON content types aren't rejected with HTTP 400.
