@@ -38,11 +38,9 @@ actual payloads — which the WAF still inspects, preserving a valid result.
   available, and return.
 - **`README.md`** — document both flags in the options list.
 
-### Drive-by bug fix
-
-`CheckGraphQLAvailability` contained a stray `s.db.IsGrpcAvailable = available`, i.e.
-the **GraphQL** pre-check was overwriting **gRPC** availability. Removed. (If you'd
-prefer this as a separate PR, I can split it out.)
+> Note: a separate, standalone bug fix (`CheckGraphQLAvailability` overwriting gRPC
+> availability) is submitted independently — see `gotestwaf-grpc-availability-bugfix-PR.md`.
+> This feature patch does **not** include it; the two apply cleanly in any order.
 
 ## Behavior
 

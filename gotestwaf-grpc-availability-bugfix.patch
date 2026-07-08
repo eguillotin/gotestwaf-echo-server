@@ -1,0 +1,12 @@
+diff --git a/internal/scanner/scanner.go b/internal/scanner/scanner.go
+index 7b45feb..cb53230 100644
+--- a/internal/scanner/scanner.go
++++ b/internal/scanner/scanner.go
+@@ -211,7 +211,6 @@ func (s *Scanner) CheckGraphQLAvailability(ctx context.Context) {
+ 		}).WithError(err).Infof("GraphQL pre-check")
+ 	}
+ 
+-	s.db.IsGrpcAvailable = available
+ 	connection := "not available"
+ 	if available {
+ 		connection = "available"

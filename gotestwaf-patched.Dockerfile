@@ -30,9 +30,12 @@ ARG GOTESTWAF_REF=6381947
 RUN git clone https://github.com/wallarm/gotestwaf.git . \
     && git checkout ${GOTESTWAF_REF}
 
-# Apply the skip-checks patch. --3way lets it survive minor upstream drift.
+# Apply the skip-checks feature patch + the standalone gRPC-availability bug fix.
+# --3way lets them survive minor upstream drift; they apply cleanly in any order.
 COPY gotestwaf-skip-checks.patch /tmp/skip-checks.patch
-RUN git apply --3way /tmp/skip-checks.patch
+COPY gotestwaf-grpc-availability-bugfix.patch /tmp/grpc-availability-bugfix.patch
+RUN git apply --3way /tmp/grpc-availability-bugfix.patch \
+    && git apply --3way /tmp/skip-checks.patch
 
 RUN go mod download
 RUN go build -o gotestwaf \

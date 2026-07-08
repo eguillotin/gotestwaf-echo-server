@@ -38,7 +38,7 @@ index cc38814..2da5798 100644
  	PassStatusCodes       []int  `mapstructure:"passStatusCodes"`
  	BlockRegex            string `mapstructure:"blockRegex"`
 diff --git a/internal/scanner/scanner.go b/internal/scanner/scanner.go
-index 7b45feb..bdb7eb0 100644
+index 7b45feb..e29e73f 100644
 --- a/internal/scanner/scanner.go
 +++ b/internal/scanner/scanner.go
 @@ -176,6 +176,15 @@ func (s *Scanner) CheckIfJavaScriptRequired(ctx context.Context) (bool, error) {
@@ -73,11 +73,3 @@ index 7b45feb..bdb7eb0 100644
  	s.logger.WithField("status", "started").Info("GraphQL pre-check")
  
  	available, err := s.graphqlClient.CheckAvailability(ctx)
-@@ -211,7 +229,6 @@ func (s *Scanner) CheckGraphQLAvailability(ctx context.Context) {
- 		}).WithError(err).Infof("GraphQL pre-check")
- 	}
- 
--	s.db.IsGrpcAvailable = available
- 	connection := "not available"
- 	if available {
- 		connection = "available"
