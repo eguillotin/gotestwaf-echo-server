@@ -72,8 +72,12 @@ app.use((req, res, next) => {
   next();
 });
 
-// JSON parser for GraphQL only
-app.use('/graphql', express.json());
+// JSON parser for GraphQL only. `type: () => true` parses the body as JSON
+// regardless of (or missing) Content-Type — scanners like GoTestWAF POST
+// GraphQL payloads with no Content-Type header, which the default parser
+// would reject (Apollo then returns HTTP 400 "POST body missing"). This is a
+// deliberately-permissive test target, so accept the body either way.
+app.use('/graphql', express.json({ type: () => true, limit: MAX_PAYLOAD_BYTES }));
 
 // Raw body parser for everything else (for echo functionality)
 app.use((req, res, next) => {
