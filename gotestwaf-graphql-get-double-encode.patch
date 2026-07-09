@@ -1,0 +1,79 @@
+diff --git a/internal/payload/placeholder/graphql.go b/internal/payload/placeholder/graphql.go
+index 4d80ebe..1cbf4be 100644
+--- a/internal/payload/placeholder/graphql.go
++++ b/internal/payload/placeholder/graphql.go
+@@ -79,9 +79,17 @@ func (p *GraphQL) CreateRequest(requestURL, payload string, config PlaceholderCo
+ 
+ 	switch conf.Method {
+ 	case http.MethodGet:
+-		queryParams := reqURL.Query()
+-		queryParams.Set("query", payload)
+-		reqURL.RawQuery = queryParams.Encode()
++		// The payload has already been transformed by the test case's encoder
++		// (e.g. the URL encoder) before reaching the placeholder. Append it to
++		// the query string verbatim instead of re-encoding it via
++		// url.Values.Encode(), which would double-encode it. This matches the
++		// URLPath/URLParam placeholders, which concatenate the encoded payload
++		// directly.
++		if reqURL.RawQuery != "" {
++			reqURL.RawQuery += "&query=" + payload
++		} else {
++			reqURL.RawQuery = "query=" + payload
++		}
+ 
+ 		req, err := http.NewRequest(http.MethodGet, reqURL.String(), nil)
+ 		if err != nil {
+diff --git a/internal/payload/placeholder/graphql_encoding_test.go b/internal/payload/placeholder/graphql_encoding_test.go
+new file mode 100644
+index 0000000..997a4ed
+--- /dev/null
++++ b/internal/payload/placeholder/graphql_encoding_test.go
+@@ -0,0 +1,48 @@
++package placeholder
++
++import (
++	"testing"
++
++	"github.com/wallarm/gotestwaf/internal/payload/encoder"
++	"github.com/wallarm/gotestwaf/internal/scanner/types"
++)
++
++// The GraphQL GET placeholder must place the already-encoded payload into the
++// query string verbatim. A test case that uses `encoder: URL` (e.g.
++// testcases/owasp-api/graphql.yml) has already URL-encoded the payload by the
++// time it reaches the placeholder, so re-encoding it here double-encodes it —
++// inconsistent with the URLPath/URLParam placeholders, which concatenate the
++// encoded payload directly.
++func TestGraphQLGetDoesNotDoubleEncode(t *testing.T) {
++	const raw = `<script>alert(1)</script>`
++
++	// Stage 1 of the pipeline: the test case's URL encoder runs first.
++	encoded, err := encoder.Apply(encoder.DefaultURLEncoder.GetName(), raw)
++	if err != nil {
++		t.Fatalf("encoder.Apply: %v", err)
++	}
++
++	conf, err := DefaultGraphQL.NewPlaceholderConfig(map[any]any{"method": "GET"})
++	if err != nil {
++		t.Fatalf("NewPlaceholderConfig: %v", err)
++	}
++
++	// Stage 2: the placeholder places the already-encoded payload.
++	req, err := DefaultGraphQL.CreateRequest("http://example.com/graphql", encoded, conf, types.GoHTTPClient)
++	if err != nil {
++		t.Fatalf("CreateRequest: %v", err)
++	}
++
++	httpReq, ok := req.(*types.GoHTTPRequest)
++	if !ok {
++		t.Fatalf("unexpected request type %T", req)
++	}
++
++	// Decoding the query parameter exactly once must yield the original payload.
++	// If it was double-encoded, one decode leaves it still URL-encoded.
++	got := httpReq.Req.URL.Query().Get("query")
++	if got != raw {
++		t.Errorf("GraphQL GET double-encoded the payload:\n got:  %q\n want: %q\n raw query string: %q",
++			got, raw, httpReq.Req.URL.RawQuery)
++	}
++}
