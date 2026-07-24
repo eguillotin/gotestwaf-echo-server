@@ -1,10 +1,11 @@
 # syntax=docker/dockerfile:1
 #
-# Build a patched GoTestWAF that includes --skipGraphQLCheck / --skipGRPCCheck.
+# Build a patched GoTestWAF that includes --skipGraphQLCheck / --skipGRPCCheck,
+# the gRPC-availability bug fix, and the GraphQL GET double-URL-encoding fix.
 # Mirrors the upstream wallarm/gotestwaf image (chromium for JS checks, testcases,
-# config.yaml, non-root user) but clones the source and applies our patch.
+# config.yaml, non-root user) but clones the source and applies our patches.
 #
-# The only build-context file it needs is gotestwaf-skip-checks.patch, so build
+# It needs three patch files from this repo's root as build context, so build
 # from this repo's root:
 #
 #   docker build -f gotestwaf-patched.Dockerfile -t gotestwaf-patched .
@@ -30,12 +31,15 @@ ARG GOTESTWAF_REF=6381947
 RUN git clone https://github.com/wallarm/gotestwaf.git . \
     && git checkout ${GOTESTWAF_REF}
 
-# Apply the skip-checks feature patch + the standalone gRPC-availability bug fix.
+# Apply the skip-checks feature patch + the standalone gRPC-availability bug fix
+# + the GraphQL GET double-URL-encoding fix.
 # --3way lets them survive minor upstream drift; they apply cleanly in any order.
 COPY gotestwaf-skip-checks.patch /tmp/skip-checks.patch
 COPY gotestwaf-grpc-availability-bugfix.patch /tmp/grpc-availability-bugfix.patch
+COPY gotestwaf-graphql-get-double-encode.patch /tmp/graphql-get-double-encode.patch
 RUN git apply --3way /tmp/grpc-availability-bugfix.patch \
-    && git apply --3way /tmp/skip-checks.patch
+    && git apply --3way /tmp/skip-checks.patch \
+    && git apply --3way /tmp/graphql-get-double-encode.patch
 
 RUN go mod download
 RUN go build -o gotestwaf \

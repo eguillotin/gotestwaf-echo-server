@@ -130,20 +130,29 @@ inspected.
 
 ### Option: skip the pre-checks in GoTestWAF
 
-This repo ships `gotestwaf-skip-checks.patch`, which adds `--skipGraphQLCheck` and
-`--skipGRPCCheck` to GoTestWAF. They skip the pre-check probe entirely and proceed
-straight to sending payloads (which the WAF still inspects) — no exception needed.
+This repo ships three GoTestWAF patches, all applied together:
 
-The patch's absolute path in this repo is:
-`<repo>/gotestwaf-skip-checks.patch` (substitute your own checkout path below).
+- `gotestwaf-skip-checks.patch` — adds `--skipGraphQLCheck` and `--skipGRPCCheck`,
+  which skip the pre-check probe entirely and proceed straight to sending payloads
+  (which the WAF still inspects) — no WAF exception needed.
+- `gotestwaf-grpc-availability-bugfix.patch` — fixes the GraphQL pre-check
+  clobbering the gRPC-availability flag.
+- `gotestwaf-graphql-get-double-encode.patch` — fixes the GraphQL GET placeholder
+  double-URL-encoding already-encoded payloads.
+
+Their absolute paths in this repo are `<repo>/gotestwaf-*.patch` (substitute your
+own checkout path below).
 
 #### Build the patched tool — pick one
 
 **A. Apply to an existing gotestwaf clone**
 ```bash
 cd <your-gotestwaf-clone>
-# --3way survives minor upstream drift; resolve any <<<< markers if they appear
+# --3way survives minor upstream drift; resolve any <<<< markers if they appear.
+# Order doesn't matter — they touch different lines and apply cleanly either way.
+git apply --3way /path/to/gotestwaf-grpc-availability-bugfix.patch
 git apply --3way /path/to/gotestwaf-skip-checks.patch
+git apply --3way /path/to/gotestwaf-graphql-get-double-encode.patch
 go build -o gotestwaf ./cmd/gotestwaf
 ./gotestwaf --help | grep -i skip        # confirm --skipGraphQLCheck / --skipGRPCCheck
 ```
@@ -151,7 +160,9 @@ go build -o gotestwaf ./cmd/gotestwaf
 **B. Fresh clone**
 ```bash
 git clone https://github.com/wallarm/gotestwaf.git && cd gotestwaf
+git apply --3way /path/to/gotestwaf-grpc-availability-bugfix.patch
 git apply --3way /path/to/gotestwaf-skip-checks.patch
+git apply --3way /path/to/gotestwaf-graphql-get-double-encode.patch
 go build -o gotestwaf ./cmd/gotestwaf
 ```
 
