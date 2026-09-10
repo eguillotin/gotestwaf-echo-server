@@ -27,5 +27,9 @@
     "cors": "^2.8.5",
     "express": "^4.18.2",
     "ws": "^8.16.0"
+  },
+  "comment:overrides": "Force qs to the patched 6.16.0 across the tree — express 4.22.2 pins the vulnerable 6.15.3 (GHSA-x5fp-wj9c-mxmx, GHSA-4mjr-xmp4-gh2g). qs stays on major 6, so this is non-breaking.",
+  "overrides": {
+    "qs": "^6.16.0"
   }
 }
