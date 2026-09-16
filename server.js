@@ -568,6 +568,21 @@ async function startServer() {
   );
 }
 
+// Crash guard: this box's only job is to stay up and reflect requests for the
+// duration of a WAF scan. It holds no shared/persistent state (every request is
+// independent), so a single malformed request must not be able to kill the
+// process mid-scan and skew results. Log and keep running instead of the Node
+// default of exiting. `logSafe` strips CR/LF so an error message carrying
+// attacker input can't forge log lines. Docker `restart: unless-stopped`
+// remains the backstop for a genuinely unrecoverable state.
+process.on('uncaughtException', (err) => {
+  console.error(`[uncaughtException] ${logSafe((err && err.stack) || err)}`);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error(`[unhandledRejection] ${logSafe((reason && reason.stack) || reason)}`);
+});
+
 // Handle graceful shutdown
 process.on('SIGTERM', () => {
   console.log('Shutting down...');
