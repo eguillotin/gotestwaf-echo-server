@@ -12,3 +12,6 @@ privkey.pem
 # Logs and OS cruft
 *.log
 .DS_Store
+
+# TLS certs for local/EC2 HTTPS (never commit private keys)
+certs/

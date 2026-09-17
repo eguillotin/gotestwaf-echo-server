@@ -7,14 +7,30 @@ services:
     image: gotestwaf-echo-server:latest
     container_name: gotestwaf-echo-server
     ports:
-      - "8080:8080"     # HTTP/REST/GraphQL
+      # HTTPS on the standard 443. The container runs as non-root (uid 1001) and
+      # can't bind a privileged port, so the app listens on 8443 inside and Docker
+      # publishes it as 443 on the host. Externally this is plain HTTPS on 443.
+      - "443:8443"      # HTTPS/REST/GraphQL/WebSocket
       - "50051:50051"   # gRPC
+      # Uncomment to also expose plain HTTP (e.g. a no-WAF baseline run):
+      # - "8080:8080"
     environment:
       # The container runs the Node server (server.js), which expects plain
       # numeric ports. (Colon-prefixed ":8080" is Go listen syntax.)
-      - HTTP_PORT=8080
+      - HTTP_PORT=8080          # internal only (used by the healthcheck)
+      - HTTPS_PORT=8443         # published as 443 on the host
       - GRPC_PORT=50051
+      # server.js starts HTTPS only when both cert files exist (mounted below).
+      - SSL_CERT_PATH=/app/certs/fullchain.pem
+      - SSL_KEY_PATH=/app/certs/privkey.pem
+    volumes:
+      # Provide the TLS cert/key. Generate a self-signed pair first:
+      #   mkdir -p certs && openssl req -x509 -newkey rsa:2048 -nodes \
+      #     -keyout certs/privkey.pem -out certs/fullchain.pem \
+      #     -days 365 -subj "/CN=echo-server" && chmod 644 certs/*.pem
+      - ./certs:/app/certs:ro
     healthcheck:
+      # Stays on the internal HTTP port; HTTP still runs inside for this probe.
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 10s
       timeout: 5s
