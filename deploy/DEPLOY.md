@@ -13,29 +13,66 @@ comparison (one report per WAF, same target).
 ## 1. Launch the instance
 
 - Amazon Linux 2023, `t3.small` is plenty.
-- Paste [`ec2-userdata.sh`](./ec2-userdata.sh) into **User data** (installs Docker +
-  compose v2, clones this repo, runs `docker compose up -d --build`).
-- Verify on the box: `curl http://localhost:8080/health` → `{"status":"healthy",...}`.
+- Paste [`ec2-userdata.sh`](./ec2-userdata.sh) into **User data**. It installs Docker,
+  Compose v2, and **Buildx** (AL2023's `docker` package ships none of these), clones
+  this repo, generates a self-signed TLS cert if none exists, and runs
+  `docker compose up -d --build`.
+- Verify on the box (self-signed cert, so `-k`):
+  `curl -k https://localhost/health` → `{"status":"healthy",...}`.
 
-The container publishes two ports (from `docker-compose.yml`):
+The container serves:
 
-| Port | Proto | Purpose |
-|------|-------|---------|
-| `8080/tcp`  | HTTP  | REST + GraphQL echo |
+| Host port | Proto | Purpose |
+|-----------|-------|---------|
+| `443/tcp`   | HTTPS | REST + GraphQL + WebSocket echo (published from the container's `8443` — it runs as non-root and can't bind `443` directly) |
 | `50051/tcp` | HTTP/2 (h2c) | gRPC echo |
+
+Plain HTTP (`8080`) runs **inside** the container for the healthcheck only and is not
+published. Uncomment the `8080:8080` line in `docker-compose.yml` if you want a
+plain-HTTP baseline exposed too.
+
+### TLS certificate
+
+HTTPS starts only when `certs/fullchain.pem` + `certs/privkey.pem` exist (mounted
+read-only into the container). The user-data script auto-generates a **self-signed**
+pair — fine for a WAF origin (the WAF/scanner connects to the origin and ignores cert
+validation; direct clients use `-k`). To use a real cert, drop your own
+`fullchain.pem`/`privkey.pem` into `certs/` and restart — the script won't overwrite an
+existing pair. Regenerate the self-signed one with:
+
+```bash
+mkdir -p certs && openssl req -x509 -newkey rsa:2048 -nodes \
+  -keyout certs/privkey.pem -out certs/fullchain.pem \
+  -days 365 -subj "/CN=aw.waaplabs.com" && chmod 644 certs/*.pem
+```
+
+### Running the script by hand / Buildx
+
+`ec2-userdata.sh` also runs cleanly by hand (`bash deploy/ec2-userdata.sh`) — it
+auto-`sudo`s the privileged steps. If you build manually **without** the script and hit
+`compose build requires buildx 0.17.0 or later`, install Buildx into the system plugin
+dir (visible to `sudo docker`):
+
+```bash
+case "$(uname -m)" in x86_64) A=amd64;; aarch64) A=arm64;; esac
+sudo curl -fsSL "https://github.com/docker/buildx/releases/download/v0.37.1/buildx-v0.37.1.linux-${A}" \
+  -o /usr/libexec/docker/cli-plugins/docker-buildx
+sudo chmod +x /usr/libexec/docker/cli-plugins/docker-buildx
+sudo docker buildx version   # confirm >= 0.17
+```
 
 ## 2. Ports to open (security group)
 
 | Port | Source | Why |
 |------|--------|-----|
-| `8080/tcp`  | Union of WAF egress CIDRs **+** your tester IP (for the no-WAF baseline) | HTTP/REST/GraphQL origin |
+| `443/tcp`   | Union of WAF egress CIDRs **+** your tester IP (for the no-WAF baseline) | HTTPS/REST/GraphQL origin |
 | `50051/tcp` | Same union | gRPC origin (plaintext h2c forwarded by the WAF/LB) |
 | `22/tcp`    | Your admin IP **/32 only** | SSH |
 
-**Never** open `8080`/`50051` to `0.0.0.0/0`.
+**Never** open `443`/`50051` to `0.0.0.0/0`.
 
 For **AWS WAF**, don't use egress CIDRs: put an **ALB in the same VPC** (443 listener,
-gRPC + HTTP target groups → `50051`/`8080`), attach AWS WAF to the ALB, and have the
+gRPC + HTTPS target groups → `50051`/`443`), attach AWS WAF to the ALB, and have the
 EC2 security group **reference the ALB's security group** instead of CIDRs.
 
 Vendor egress ranges change — pull them at test time, don't hardcode:

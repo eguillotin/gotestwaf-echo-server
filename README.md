@@ -49,16 +49,34 @@ curl https://localhost/health -k
 
 ### Using Docker Compose
 
+`docker-compose.yml` publishes **HTTPS on host port 443** (mapped from the container's
+`8443`, since it runs as non-root and can't bind `443` directly) and **gRPC on 50051**.
+Plain HTTP (`8080`) stays internal for the healthcheck. It mounts `./certs` for TLS, so
+generate a cert first — HTTPS won't start without one:
+
 ```bash
+# One-time: self-signed cert (drop in a real fullchain.pem/privkey.pem to replace it)
+mkdir -p certs
+openssl req -x509 -newkey rsa:2048 -nodes \
+  -keyout certs/privkey.pem -out certs/fullchain.pem \
+  -days 365 -subj "/CN=localhost"
+chmod 644 certs/*.pem
+
 # Build and run
 docker compose up -d
 
-# Check status
+# Check status / logs
 docker compose ps
-
-# View logs
 docker compose logs -f
+
+# Verify (self-signed -> -k)
+curl -k https://localhost/health
 ```
+
+> **Amazon Linux 2023:** `docker compose up --build` needs the Buildx plugin, which the
+> base `docker` package doesn't include (`compose build requires buildx 0.17.0 or
+> later`). `deploy/ec2-userdata.sh` installs it automatically; to install by hand see
+> [`deploy/DEPLOY.md`](deploy/DEPLOY.md).
 
 ## Testing with GoTestWAF
 

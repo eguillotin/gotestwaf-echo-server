@@ -37,8 +37,8 @@ if [ "$(id -u)" -eq 0 ]; then SUDO=""; else SUDO="sudo"; fi
 # it's the current user (root under cloud-init).
 LOGIN_USER="${SUDO_USER:-$(id -un)}"
 
-# --- Install Docker + git ----------------------------------------------------
-$SUDO dnf install -y docker git
+# --- Install Docker + git + openssl ------------------------------------------
+$SUDO dnf install -y docker git openssl
 $SUDO systemctl enable --now docker
 
 # Add the login user to the docker group (takes effect on next login; we still
@@ -90,11 +90,26 @@ else
 fi
 cd "$REPO_DIR"
 
+# --- TLS cert for HTTPS on 443 -----------------------------------------------
+# docker-compose publishes HTTPS (443) and mounts ./certs; server.js starts
+# HTTPS only when both cert files exist. Generate a self-signed pair if none is
+# present. A real cert dropped into certs/ is left untouched. Override the
+# subject CN with CERT_CN (e.g. your hostname).
+CERT_CN="${CERT_CN:-echo-server}"
+if [ ! -f certs/fullchain.pem ] || [ ! -f certs/privkey.pem ]; then
+  mkdir -p certs
+  openssl req -x509 -newkey rsa:2048 -nodes \
+    -keyout certs/privkey.pem -out certs/fullchain.pem \
+    -days 365 -subj "/CN=${CERT_CN}"
+  chmod 644 certs/*.pem
+fi
+
 # Ports must stay numeric (Node parsePort strips a stray leading colon, but keep
-# them clean). 8080 = HTTP/REST/GraphQL, 50051 = gRPC.
+# them clean). 443 = HTTPS/REST/GraphQL (from container 8443), 50051 = gRPC.
 $SUDO docker compose up -d --build
 
 # --- Sanity check ------------------------------------------------------------
-# (In cloud-init this lands in /var/log/cloud-init-output.log.)
-sleep 5
-curl -fsS http://localhost:8080/health || echo "WARN: health check did not pass yet"
+# (In cloud-init this lands in /var/log/cloud-init-output.log.) Self-signed
+# cert, so -k. Give the container a moment to build/start first.
+sleep 10
+curl -fsSk https://localhost:443/health || echo "WARN: HTTPS health check did not pass yet"
