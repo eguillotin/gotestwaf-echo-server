@@ -13,13 +13,18 @@ services:
       - "443:8443"      # HTTPS/REST/GraphQL/WebSocket
       - "50051:50051"   # gRPC
       # Uncomment to also expose plain HTTP (e.g. a no-WAF baseline run):
-      # - "8080:8080"
+      - "8080:8080"
     environment:
       # The container runs the Node server (server.js), which expects plain
       # numeric ports. (Colon-prefixed ":8080" is Go listen syntax.)
       - HTTP_PORT=8080          # internal only (used by the healthcheck)
       - HTTPS_PORT=8443         # published as 443 on the host
       - GRPC_PORT=50051
+      # Serve gRPC over TLS instead of plaintext. Leave off for direct
+      # `grpcurl -plaintext`/GoTestWAF probes; set true when a proxy (e.g.
+      # CloudFront) fronts gRPC and expects h2-over-TLS to the origin. Reuses
+      # the cert below.
+      # - GRPC_TLS=true
       # server.js starts HTTPS only when both cert files exist (mounted below).
       - SSL_CERT_PATH=/app/certs/fullchain.pem
       - SSL_KEY_PATH=/app/certs/privkey.pem

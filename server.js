@@ -42,6 +42,12 @@ const HTTP_PORT = parsePort(process.env.HTTP_PORT, 8080);
 const HTTPS_PORT = parsePort(process.env.HTTPS_PORT, 8443);
 const GRPC_PORT = parsePort(process.env.GRPC_PORT, 50051);
 
+// Serve gRPC over TLS (h2) instead of plaintext (h2c). Off by default so direct
+// `grpcurl -plaintext` / GoTestWAF probes keep working. Set GRPC_TLS=true when a
+// proxy like CloudFront fronts gRPC — it expects h2-over-TLS to the origin.
+// Reuses the same cert as HTTPS (SSL_CERT_PATH / SSL_KEY_PATH).
+const GRPC_TLS = String(process.env.GRPC_TLS || '').toLowerCase() === 'true';
+
 // Max message/body size shared across protocols (HTTP raw body, WebSocket
 // frames, gRPC client-stream accumulation). Echoing payloads is the job;
 // letting a single client OOM the box is not.
@@ -554,16 +560,40 @@ async function startServer() {
   // Add reflection service for grpcurl discovery
   const reflection = new ReflectionService(packageDefinition);
   reflection.addToServer(grpcServer);
-  
+
+  // gRPC credentials: plaintext (h2c) by default so direct grpcurl/GoTestWAF
+  // plaintext probes work. With GRPC_TLS=true, serve gRPC over TLS (h2) using
+  // the same cert as HTTPS — required when CloudFront (or another proxy) fronts
+  // gRPC, which expects h2-over-TLS to the origin. No client cert (no mTLS). If
+  // GRPC_TLS is set but the certs are missing, fall back to insecure so the
+  // server still starts (its job is to stay reachable).
+  let grpcCredentials;
+  if (GRPC_TLS && fs.existsSync(SSL_CERT_PATH) && fs.existsSync(SSL_KEY_PATH)) {
+    grpcCredentials = grpc.ServerCredentials.createSsl(
+      null, // no CA — don't request/verify client certificates
+      [{
+        private_key: fs.readFileSync(SSL_KEY_PATH),
+        cert_chain: fs.readFileSync(SSL_CERT_PATH),
+      }],
+      false // checkClientCertificate = false (no mTLS)
+    );
+    console.log('[gRPC] TLS enabled (GRPC_TLS=true)');
+  } else {
+    if (GRPC_TLS) {
+      console.warn('[gRPC] GRPC_TLS=true but cert files missing; using insecure');
+    }
+    grpcCredentials = grpc.ServerCredentials.createInsecure();
+  }
+
   grpcServer.bindAsync(
     `0.0.0.0:${GRPC_PORT}`,
-    grpc.ServerCredentials.createInsecure(),
+    grpcCredentials,
     (error, port) => {
       if (error) {
         console.error('gRPC server failed to start:', error);
         return;
       }
-      console.log(`[gRPC] Server running on port ${port}`);
+      console.log(`[gRPC] Server running on port ${port}${GRPC_TLS ? ' (TLS)' : ''}`);
     }
   );
 }
