@@ -120,9 +120,9 @@ that protocol N/A for that vendor in the report rather than chasing it.
 
 ## 4. Run GoTestWAF against each WAF
 
-Use the patched tool (see the repo README — it adds `--skipGRPCCheck` /
-`--skipGraphQLCheck`). Point `--url` / `--graphqlURL` / gRPC at each **WAF hostname**,
-not the origin:
+Use upstream GoTestWAF **v0.5.10+** (all needed fixes are merged — see the repo README;
+no patches). Point `--url` / `--graphqlURL` / gRPC at each **WAF hostname**, not the
+origin:
 
 ```bash
 ./gotestwaf \

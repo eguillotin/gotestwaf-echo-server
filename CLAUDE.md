@@ -35,10 +35,13 @@ Genuine defects only — crashes, things that don't build, config that breaks st
 - **Two compose files, both valid:** the repo-root `docker-compose.yml` publishes HTTPS on 443 (from container 8443) and gRPC on 50051 directly — use for direct/generic runs. `deploy/docker-compose.nginx.yml` + `deploy/nginx.conf` add an **nginx sidecar** that multiplexes HTTP + gRPC on a single 443 (echo-server internal-only) — use behind a proxy that only forwards on 443 (e.g. Imperva's AWS vPOP). See `deploy/DEPLOY.md` §6.
 - `GRPC_TLS=true` makes the gRPC server serve TLS (reusing the HTTPS cert) instead of plaintext h2c; default is plaintext.
 
-## GoTestWAF patches (in this repo)
+## GoTestWAF: no patches needed (all merged upstream)
 
-- Only `gotestwaf-graphql-get-double-encode.patch` (+ its `-PR.md`) remains — that bug is **still open upstream**. `gotestwaf-patched.Dockerfile` builds **v0.5.9** and applies just this patch.
-- The former `skip-checks` and `grpc-availability-bugfix` patches were **merged upstream in v0.5.9** and removed from this repo. `--skipGraphQLCheck`/`--skipGRPCCheck` are now built in. Don't re-add them; if upstream drifts, re-check with `git grep` before assuming a patch is needed.
+- This repo used to ship three GoTestWAF patches; **all are now merged upstream**, so the patch files and the custom `gotestwaf-patched.Dockerfile` were removed. Use the official tool at **v0.5.10+** (`wallarm/gotestwaf:v0.5.10` image, or `git checkout v0.5.10 && go build`).
+  - skip-checks (`--skipGraphQLCheck`/`--skipGRPCCheck`) — merged v0.5.9
+  - gRPC-availability fix — merged v0.5.9
+  - GraphQL GET double-URL-encoding fix ([issue #289](https://github.com/wallarm/gotestwaf/issues/289)) — merged v0.5.10
+- Don't re-add these patches. If a future GoTestWAF bug needs one, verify with `git grep` against `origin/master` before assuming it's unfixed.
 
 ## Ports gotcha
 
