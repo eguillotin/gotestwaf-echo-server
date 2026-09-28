@@ -1,11 +1,13 @@
 # syntax=docker/dockerfile:1
 #
-# Build a patched GoTestWAF that includes --skipGraphQLCheck / --skipGRPCCheck,
-# the gRPC-availability bug fix, and the GraphQL GET double-URL-encoding fix.
+# Build a patched GoTestWAF with the GraphQL GET double-URL-encoding fix.
 # Mirrors the upstream wallarm/gotestwaf image (chromium for JS checks, testcases,
-# config.yaml, non-root user) but clones the source and applies our patches.
+# config.yaml, non-root user) but clones the source and applies our patch.
 #
-# It needs three patch files from this repo's root as build context, so build
+# As of v0.5.9 upstream already includes --skipGraphQLCheck / --skipGRPCCheck and
+# the gRPC-availability fix (both merged), so only the double-encode patch remains.
+#
+# It needs one patch file from this repo's root as build context, so build
 # from this repo's root:
 #
 #   docker build -f gotestwaf-patched.Dockerfile -t gotestwaf-patched .
@@ -25,21 +27,17 @@ RUN apk --no-cache add git
 
 WORKDIR /app
 
-# Upstream revision the patch was generated against. Override with
+# Upstream revision to build. v0.5.9 already includes the skip-checks flags and
+# the gRPC-availability fix. Override with:
 #   --build-arg GOTESTWAF_REF=<branch|tag|sha>
-ARG GOTESTWAF_REF=6381947
+ARG GOTESTWAF_REF=v0.5.9
 RUN git clone https://github.com/wallarm/gotestwaf.git . \
     && git checkout ${GOTESTWAF_REF}
 
-# Apply the skip-checks feature patch + the standalone gRPC-availability bug fix
-# + the GraphQL GET double-URL-encoding fix.
-# --3way lets them survive minor upstream drift; they apply cleanly in any order.
-COPY gotestwaf-skip-checks.patch /tmp/skip-checks.patch
-COPY gotestwaf-grpc-availability-bugfix.patch /tmp/grpc-availability-bugfix.patch
+# Apply the GraphQL GET double-URL-encoding fix (still open upstream).
+# --3way lets it survive minor upstream drift.
 COPY gotestwaf-graphql-get-double-encode.patch /tmp/graphql-get-double-encode.patch
-RUN git apply --3way /tmp/grpc-availability-bugfix.patch \
-    && git apply --3way /tmp/skip-checks.patch \
-    && git apply --3way /tmp/graphql-get-double-encode.patch
+RUN git apply --3way /tmp/graphql-get-double-encode.patch
 
 RUN go mod download
 RUN go build -o gotestwaf \
