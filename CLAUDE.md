@@ -32,6 +32,13 @@ Genuine defects only — crashes, things that don't build, config that breaks st
 - **`server.js` (Node/Express + Apollo + @grpc/grpc-js + ws) is the only server.** The `Dockerfile` and `docker-compose.yml` build and run it.
 - `proto/echo.proto` is loaded by the Node gRPC server at runtime — keep it.
 - There is no Go server. A broken, non-compiling Go implementation (`main.go` + `go.mod`) was removed; don't re-add a second implementation unless explicitly asked.
+- **Two compose files, both valid:** the repo-root `docker-compose.yml` publishes HTTPS on 443 (from container 8443) and gRPC on 50051 directly — use for direct/generic runs. `deploy/docker-compose.nginx.yml` + `deploy/nginx.conf` add an **nginx sidecar** that multiplexes HTTP + gRPC on a single 443 (echo-server internal-only) — use behind a proxy that only forwards on 443 (e.g. Imperva's AWS vPOP). See `deploy/DEPLOY.md` §6.
+- `GRPC_TLS=true` makes the gRPC server serve TLS (reusing the HTTPS cert) instead of plaintext h2c; default is plaintext.
+
+## GoTestWAF patches (in this repo)
+
+- Only `gotestwaf-graphql-get-double-encode.patch` (+ its `-PR.md`) remains — that bug is **still open upstream**. `gotestwaf-patched.Dockerfile` builds **v0.5.9** and applies just this patch.
+- The former `skip-checks` and `grpc-availability-bugfix` patches were **merged upstream in v0.5.9** and removed from this repo. `--skipGraphQLCheck`/`--skipGRPCCheck` are now built in. Don't re-add them; if upstream drifts, re-check with `git grep` before assuming a patch is needed.
 
 ## Ports gotcha
 

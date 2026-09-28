@@ -126,9 +126,21 @@ When the echo server sits behind a real WAF (e.g. Imperva Cloud WAF), GoTestWAF'
 GraphQL and gRPC **pre-checks** can fail before any test runs — even though the
 endpoints work. These are WAF/topology issues, not echo-server bugs:
 
+> **Full production deployment** (CloudFront → Imperva AWS vPOP → origin, incl. the
+> nginx sidecar that multiplexes HTTP + gRPC on a single 443, the gRPC-bypass-Imperva
+> routing, cert issuance, and the exact scan flags) is documented in
+> [`deploy/DEPLOY.md` §6](deploy/DEPLOY.md). The notes below are the general pre-check
+> gotchas that apply to any WAF.
+>
+> **Serving gRPC over TLS:** set `GRPC_TLS=true` (reuses the HTTPS cert) when a proxy
+> fronts gRPC and expects h2-over-TLS to the origin. Default is plaintext h2c so direct
+> `grpcurl -plaintext` probes work. The nginx sidecar deployment terminates TLS at nginx
+> instead, so it leaves the echo-server on plaintext h2c internally.
+
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| `gRPC pre-check connection="not available"` | Cloud WAF only proxies 80/443, not the gRPC port (e.g. 50051) | Test gRPC **direct to the origin** (`--url=http://<origin>:<port>`), or front gRPC with a gRPC-capable proxy |
+| `gRPC pre-check connection="not available"` | Cloud WAF only proxies 80/443, not the gRPC port (e.g. 50051) | Test gRPC **direct to the origin** (`--url=http://<origin>:<port>`), or front gRPC with a gRPC-capable proxy / nginx sidecar on 443 (see DEPLOY.md §6) |
+| gRPC unary call **hangs** or `server closed the stream without sending trailers` | A body-inspecting proxy in front (e.g. Imperva AWS vPOP) doesn't return gRPC trailers on unary calls | Route gRPC around that proxy (CloudFront behavior → origin direct); mark gRPC N/A for that WAF |
 | `GraphQL pre-check ... couldn't send request` | WAF issues a session/redirect challenge (e.g. Imperva `307` + `incap_ses` cookies) the pre-check client doesn't complete | `--followCookies --renewSession`, or exempt the test source IP from the session challenge |
 | `GraphQL pre-check connection="not available"` (instant) | WAF blocks the pre-check probe `GET /graphql?query={__typename}` (introspection-like) | Narrow WAF exception (below), or the patched flags (below) |
 
@@ -148,43 +160,41 @@ inspected.
 
 ### Option: skip the pre-checks in GoTestWAF
 
-This repo ships three GoTestWAF patches, all applied together:
+`--skipGraphQLCheck` / `--skipGRPCCheck` skip the availability pre-check probe and
+proceed straight to sending payloads (which the WAF still inspects) — no WAF exception
+needed. **As of upstream v0.5.9 these flags are built in**, along with the
+gRPC-availability fix — so you no longer need to patch for them.
 
-- `gotestwaf-skip-checks.patch` — adds `--skipGraphQLCheck` and `--skipGRPCCheck`,
-  which skip the pre-check probe entirely and proceed straight to sending payloads
-  (which the WAF still inspects) — no WAF exception needed.
-- `gotestwaf-grpc-availability-bugfix.patch` — fixes the GraphQL pre-check
-  clobbering the gRPC-availability flag.
+One fix is **still open upstream** and shipped here as a patch:
+
 - `gotestwaf-graphql-get-double-encode.patch` — fixes the GraphQL GET placeholder
   double-URL-encoding already-encoded payloads.
 
-Their absolute paths in this repo are `<repo>/gotestwaf-*.patch` (substitute your
-own checkout path below).
+> The two previously-shipped patches (`gotestwaf-skip-checks.patch`,
+> `gotestwaf-grpc-availability-bugfix.patch`) were **merged upstream in v0.5.9** and
+> have been removed from this repo. Build from v0.5.9 or later to get them.
 
 #### Build the patched tool — pick one
 
-**A. Apply to an existing gotestwaf clone**
+**A. Apply to an existing gotestwaf clone** (v0.5.9+)
 ```bash
 cd <your-gotestwaf-clone>
+git checkout v0.5.9
 # --3way survives minor upstream drift; resolve any <<<< markers if they appear.
-# Order doesn't matter — they touch different lines and apply cleanly either way.
-git apply --3way /path/to/gotestwaf-grpc-availability-bugfix.patch
-git apply --3way /path/to/gotestwaf-skip-checks.patch
 git apply --3way /path/to/gotestwaf-graphql-get-double-encode.patch
 go build -o gotestwaf ./cmd/gotestwaf
-./gotestwaf --help | grep -i skip        # confirm --skipGraphQLCheck / --skipGRPCCheck
+./gotestwaf --help | grep -i skip        # confirm --skipGraphQLCheck / --skipGRPCCheck (now upstream)
 ```
 
 **B. Fresh clone**
 ```bash
 git clone https://github.com/wallarm/gotestwaf.git && cd gotestwaf
-git apply --3way /path/to/gotestwaf-grpc-availability-bugfix.patch
-git apply --3way /path/to/gotestwaf-skip-checks.patch
+git checkout v0.5.9
 git apply --3way /path/to/gotestwaf-graphql-get-double-encode.patch
 go build -o gotestwaf ./cmd/gotestwaf
 ```
 
-**C. Docker** — `gotestwaf-patched.Dockerfile` clones + patches + builds for you:
+**C. Docker** — `gotestwaf-patched.Dockerfile` clones v0.5.9 + patches + builds for you:
 ```bash
 docker build -f gotestwaf-patched.Dockerfile -t gotestwaf-patched .
 docker run --rm gotestwaf-patched --help | grep -i skip   # verify
@@ -207,8 +217,9 @@ docker run --rm -v "$(pwd)/reports:/app/reports" gotestwaf-patched \
 ```
 
 The log should read `GraphQL pre-check status=skipped connection="assumed available"`.
-gRPC through a Cloud WAF still won't work (port not proxied) — test gRPC direct to the
-origin. The full PR write-up for upstreaming these flags is in `gotestwaf-skip-checks-PR.md`.
+gRPC through a Cloud WAF may not work if the proxy only forwards on 80/443 — front it
+with an nginx sidecar on 443 or route gRPC direct to the origin (see
+[`deploy/DEPLOY.md` §6](deploy/DEPLOY.md)).
 
 > Note: the echo server sets Apollo `csrfPrevention: false` so scanners probing
 > `/graphql` via `GET` or non-JSON content types aren't rejected with HTTP 400.

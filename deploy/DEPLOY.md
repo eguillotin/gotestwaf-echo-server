@@ -10,6 +10,12 @@ comparison (one report per WAF, same target).
 > `0.0.0.0/0` security group. Lock inbound to your WAF vendors' egress ranges and
 > your own IPs.
 
+> **Two deployment shapes:** the generic model below (§1–5) publishes HTTPS on 443 and
+> gRPC on 50051 separately — use it when the WAF/LB can forward gRPC on its own port.
+> When the proxy only forwards on 443 (e.g. Imperva's AWS vPOP), use the **nginx
+> sidecar** that multiplexes HTTP + gRPC on a single 443 — see **§6** and
+> [`docker-compose.nginx.yml`](./docker-compose.nginx.yml).
+
 ## 1. Launch the instance
 
 - Amazon Linux 2023, `t3.small` is plenty.
@@ -102,7 +108,8 @@ unchanged.
 | Azure | **Application Gateway WAF v2** (has gRPC/HTTP2), not Front Door | Use App Gateway |
 | F5 | BIG-IP / F5 Distributed Cloud (full proxy) | Full proxy |
 | Fortinet FortiWeb | Recent versions inspect gRPC | Verify version |
-| Imperva | 443/h2 | Limited — use `--skipGRPCCheck` |
+| Imperva (SaaS Cloud WAF) | 443/h2 | Custom-port listener (e.g. 50051) available |
+| Imperva (AWS vPOP) | **gRPC not viable** | vPOP only forwards on 80/443 **and** hangs on unary gRPC request bodies — see §6 |
 | Cloudflare | gRPC on paid plans, 443/TLS | Managed-rule body coverage limited |
 | Akamai | Limited on standard App & API Protector | Verify per contract |
 
@@ -129,3 +136,128 @@ not the origin:
 Run once per vendor (swap the hostname + `--reportName`) to produce one comparable
 report each. Add a `baseline` run straight at the origin (no WAF) for the control row —
 see `waf-targets.conf.example`.
+
+If GoTestWAF stops with **"WAF was not detected"**, its auto block-check didn't
+recognize a block. Add `--skipWAFBlockCheck` to run all tests anyway, and tune block
+detection to how the WAF actually signals a block. For **Imperva**, blocks come back as
+an Incapsula page, so add a regex:
+
+```bash
+  --skipWAFBlockCheck \
+  --blockStatusCodes=403,406,429 \
+  --blockRegex='Incapsula|_Incapsula_Resource|incident'
+```
+
+"WAF not detected" with a plain `200`+echo on an attack probe means the WAF isn't
+blocking (monitor/count mode, or rules disabled) — fix that in the WAF console before a
+run is meaningful. Sanity-check with:
+`curl -sk -o /dev/null -w '%{http_code}\n' "https://<host>/?q=<script>alert(1)</script>"`.
+
+## 6. Real-world topology: CloudFront → Imperva AWS vPOP → origin
+
+This is the concrete setup used for `aw.waaplabs.com` (Imperva behind CloudFront). It
+differs from the generic "WAF in front of origin" model because of two hard limits of
+the **Imperva AWS vPOP** integration discovered in testing:
+
+1. **The vPOP only forwards to the origin on 80/443** — no custom-port (50051) listener,
+   unlike the SaaS Cloud WAF. So the origin must serve **HTTP and gRPC on the same 443**.
+2. **The vPOP hangs on unary gRPC request bodies.** Reflection (bodyless) passes, but a
+   unary call with a protobuf body never completes (the body-inspecting proxy doesn't
+   return gRPC trailers). So gRPC **cannot** be Imperva-inspected through this vPOP.
+
+### Origin: nginx sidecar multiplexes HTTP + gRPC on 443
+
+Because the vPOP forwards everything to origin:443, the origin serves both protocols on
+443 via an **nginx reverse proxy** (Express and grpc-js can't share a port in-process).
+Use the behind-WAF compose file instead of the repo-root one:
+
+```bash
+docker compose -f deploy/docker-compose.nginx.yml up -d --build
+```
+
+nginx terminates TLS on 443 and path-routes: gRPC service paths
+(`/encoder.ServiceFooBar/*`, `/echo.EchoService/*`, `/grpc.reflection.*`) →
+grpc-js:50051 (h2c); everything else → Express:8080. The echo-server is internal-only.
+See [`nginx.conf`](./nginx.conf). Needs a cert in `../certs` (Let's Encrypt for the
+origin hostname in prod). `50051` is no longer published to the host — it's internal.
+
+### CloudFront: two origins, HTTP via Imperva, gRPC bypasses Imperva
+
+Since Imperva can't carry unary gRPC, gRPC is routed **around** Imperva straight to the
+origin, while HTTP/GraphQL stay Imperva-inspected:
+
+```
+                         ┌─ default *                  → Imperva vPOP:443 → EC2:443 [nginx]  (HTTP/GraphQL, WAF-inspected)
+client ─443─▶ CloudFront ┤
+                         └─ /encoder.ServiceFooBar/*    → origin (EC2):443 → EC2:443 [nginx]  (gRPC, bypasses Imperva)
+```
+
+CloudFront origins:
+- **Imperva origin** (`*.origins.<region>.vpop.imperva.com`, HTTPS 443) — default behavior.
+- **`ec2-direct`** (`origin.waaplabs.com`, HTTPS 443, real cert) — the `/encoder.ServiceFooBar/*`
+  behavior, **gRPC toggle Enabled**, CachingDisabled, AllViewer.
+
+Every behavior needs **CachingDisabled + AllViewer** (a cached/response-buffering
+behavior eats gRPC trailers and stops payloads reaching the origin). Distribution must
+have **HTTP/2 enabled** (gRPC is h2). Use the real ACM/wildcard cert for the viewer
+domain; the `ec2-direct` origin needs a **publicly-trusted** cert (self-signed → 502).
+
+### Origin cert (Let's Encrypt, no ALB/IAM)
+
+The `ec2-direct` origin must present a trusted cert or CloudFront 502s. Issue one on the
+EC2 with certbot HTTP-01 (needs port 80 reachable at issuance; no AWS IAM):
+
+```bash
+sudo dnf install -y python3 python3-pip augeas-libs openssl
+sudo python3 -m venv /opt/certbot && sudo /opt/certbot/bin/pip install certbot
+sudo ln -sf /opt/certbot/bin/certbot /usr/bin/certbot
+sudo certbot certonly --standalone -d origin.waaplabs.com \
+  --agree-tos -m you@example.com --non-interactive
+sudo cp /etc/letsencrypt/live/origin.waaplabs.com/{fullchain,privkey}.pem certs/
+sudo chmod 644 certs/*.pem && docker compose -f deploy/docker-compose.nginx.yml restart
+```
+
+### Security group for this topology
+
+| Port | Source | Why |
+|------|--------|-----|
+| `443/tcp` | Imperva egress ranges | HTTP/GraphQL via the vPOP |
+| `443/tcp` | prefix list `com.amazonaws.global.cloudfront.origin-facing` | gRPC direct from CloudFront (`ec2-direct`) |
+| `22/tcp`  | Your admin IP /32 | SSH |
+
+`50051` is **not** exposed publicly here — it's internal to the Docker network.
+
+### GoTestWAF against this topology
+
+```bash
+./gotestwaf \
+  --url=https://aw.waaplabs.com \
+  --graphqlURL=https://aw.waaplabs.com/graphql --skipGraphQLCheck \
+  --grpcPort=443 --skipGRPCCheck --skipWAFBlockCheck \
+  --blockStatusCodes=403,406,429 --blockRegex='Incapsula|_Incapsula_Resource|incident' \
+  --blockConnReset --followCookies --renewSession \
+  --nonBlockedAsPassed --ignoreUnresolved --reportFormat=pdf,json --reportName=imperva-full
+```
+
+**Result attribution:** HTTP/REST/GraphQL = Imperva-inspected. gRPC = CloudFront-only
+(bypasses Imperva). Record **gRPC as N/A for Imperva**, reason: *AWS vPOP hangs on unary
+gRPC request bodies (reflection passes, method calls don't)*.
+
+### Verifying each hop (bottom-up)
+
+`/tmp/service.proto` = GoTestWAF's proto (`package encoder; service ServiceFooBar { rpc foo(Request) returns (Response); }`).
+
+```bash
+# origin direct (bypass CloudFront+Imperva) — proves nginx routes gRPC:
+grpcurl -insecure -import-path /tmp -proto service.proto \
+  -d '{"value":"x"}' origin.waaplabs.com:443 encoder.ServiceFooBar/foo   # -> Unimplemented
+# full chain via CloudFront (gRPC bypasses Imperva):
+grpcurl -import-path /tmp -proto service.proto \
+  -d '{"value":"x"}' aw.waaplabs.com:443 encoder.ServiceFooBar/foo       # -> Unimplemented
+# HTTP through Imperva:
+curl -s https://aw.waaplabs.com/health
+```
+`Unimplemented` = routed correctly (the origin implements `echo.EchoService`, not
+`encoder.ServiceFooBar`, so it rejects the method with proper gRPC trailers). A **hang**
+or **"server closed the stream without sending trailers"** = a hop above nginx is
+mangling gRPC (wrong origin, gRPC toggle off, or the Imperva vPOP on the gRPC path).
